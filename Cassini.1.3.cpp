@@ -2,7 +2,7 @@
 	Author : Divya Mamgai
 	License : The MIT License (MIT)
 	Copyright (c) 2016 Divya Mamgai
-	Version : Cassini.1.2
+	Version : Cassini.1.3
 */
 #define _WIN32_WINNT 0x0500
 #include<iostream>
@@ -43,8 +43,13 @@
 #define MenuID_DeleteProjectDeleteFolder 10251
 #define MenuID_DeleteProjectDeleteDatabase 10252
 #define MenuID_DeleteProjectDone 10254
+#define MenuID_ImportExportProjectSettings 1026
+#define MenuID_ImportExportProjectSettingsImport 10261
+#define MenuID_ImportExportProjectSettingsImportManual 102611
+#define MenuID_ImportExportProjectSettingsImportAutomatic 102612
 #define MenuID_CompressFolder 1031
 #define MenuID_Settings 1041
+#define MenuID_CompressAPKFile 1051
 
 using namespace std;
 
@@ -53,14 +58,16 @@ const char* SettingsFilePath = "resources\\settings.bin";
 const char* SettingsTempFilePath = "resources\\temp_settings.bin";
 const char* ProjectsDataBaseFilePath = "resources\\projects.bin";
 const char* ProjectsTempDataBaseFilePath = "resources\\temp_projects.bin";
+string SignApkCertificateFilePath = "resources\\testkey.x509.pem";
+string SignApkKeyFilePath = "resources\\testkey.pk8";
 const int NoOfSettings = 6;
 const int NoOfVariables = 5;
 const float FPS = 0.1;
 const int TitleCharLen = 30;
 const int FileNameCharLen = 255;
 byte LinuxEOL = (byte)0x0A;
-const double Version = 1.2;
-const char* VersionString = "1.2";
+const double Version = 1.3;
+const char* VersionString = "1.3";
 string Title = "Cassini";
 const int DefaultWidth = 700;
 const int DefaultHeight = 380;
@@ -122,6 +129,18 @@ struct ProjectFilePropertiesStruct
     int ExceptionStatus;
 };
 
+struct ProjectBackup
+{
+    int CompressionLevel;
+    int PNGCompression;
+    int PNGCompressionLevel;
+    int ZipAlign;
+    int SignApk;
+    char Name[FileNameCharLen];
+    int IntegerVariable;
+    int StructType;
+};
+
 struct button {
     short int status;
     int x;
@@ -170,6 +189,9 @@ ProjectFilePropertiesStruct *ProjectFileArray,*FolderFileArray;
 list *ProjectFileList;
 list *ProjectList;
 int DeleteProjectType = 0;
+int CompressAPKFileSelected = 0;
+int ProjectBackupFileSelected = 0;
+int ImportProjectManualCautionType1Flag = 0;
 
 void Menu(int);
 void Back();
@@ -206,7 +228,13 @@ char Strings[][StringCharLen]= {
     "Drag and Drop the folder which contains the APK files you want to compress.", // 27
     "Performing the compression of the given folder.", // 28
     "The compressed APK files are in this path - ``", // 29
-    "Done, Press any key to ``" // 30
+    "Done, Press any key to ``", // 30
+    "Performing the compression of the given file.", // 31
+    "Drag and Drop the APK file you want to compress.", // 32
+    "The project settings backup process is completed. And has been successfully exported to the address -", // 33
+    "Drag and Drop the Backup file of `` Project to start the Import process.", // 34
+    "The Backup file you have provided doesn't have the same number of files as your current project! Do you want to continue the import process? [Note: This may cause No Compression of some files which are missing in this Backup's data! Or their might not be a single matching file!]", // 35
+    "Their are many files in this Backup's data which are not present in the Backup Folder! Please select the action you might want to perform to counter this error." // 36
 };
 
 char HeaderString[][79]= {
@@ -587,6 +615,7 @@ public:
                         }
                         break;
                     case VK_ESCAPE:
+                    case VK_BACK:
                         delete[] Button;
                         Back();
                         break;
@@ -713,6 +742,7 @@ public:
                         return ListReturnValue;
                         break;
                     case VK_ESCAPE:
+                    case VK_BACK:
                         delete[] List;
                         Back();
                         break;
@@ -1042,6 +1072,8 @@ public:
                         return ScrollInput[CurrentID-1].AssociatedID;
                         break;
                     case VK_ESCAPE:
+                    case VK_BACK:
+                        delete[] ScrollInput;
                         Back();
                         break;
                     }
@@ -2323,8 +2355,8 @@ InputModeLabel:
         if(Count==NoOfFilesFound) return 1;
         else return 0;
     }
-    int FileSize(const char Path[],int Type = 1) {
-        int Size = 0;
+    long double FileSize(const char Path[],int Type = 1) {
+        long double Size = 0.0;
         fstream File;
         switch(Type) {
         case 1:
@@ -2503,6 +2535,7 @@ public:
                 }
                 else
                 {
+					if(SettingType>3) break;
                     string IndividualSetting;
                     stringstream SettingsStream;
                     SettingsStream.str(SettingsString);
@@ -2599,9 +2632,11 @@ void GenerateProjectFileArray();
 void PerformCompression();
 void PerformCompressionConfirmYes();
 void PerformCompressFolder();
+void PerformCompressFile();
 void InitializePNGFileCount(const char* DirectoryPath);
 void CompressPNG(const char* DirectoryPath,string Quality);
 void CompressFile(ProjectFilePropertiesStruct File,int CurrentCompressionID,int NoOfFiles,int Type = 1);
+void CompressAPKFile();
 void MaintainProjectButtonList();
 void ManageExceptions();
 void ManageProperties();
@@ -2617,6 +2652,13 @@ void GenerateProjectList();
 void GenerateProjectFileList();
 void MaintainProjectSelectType1();
 void MaintainProjectSelectType2();
+void ImportExportProjectSettings();
+void ImportProject();
+void ExportProject();
+void ImportProjectManual();
+void ImportProjectAutomatic();
+void ImportProjectManualCautionType1Yes();
+void ImportProjectManualCautionType1No();
 
 void DummyFunction() {
     // This function doesn't do anything.
@@ -2644,7 +2686,7 @@ void MenuDesign(int Height = 15) {
 }
 
 // Important Variables.
-        
+
 SettingsStruct SettingsArray[NoOfSettings] = {
     {1,6,15,"Compression Level: "},
     {2,6,18,"PNG Compression: "},
@@ -2655,11 +2697,12 @@ SettingsStruct SettingsArray[NoOfSettings] = {
 };
 
 button MainMenuButtons[][ButtonsColumnLimit]= {
-    {1,8,16,"Create a Project",Project},
-    {1,8,18,"Maintain a Project",MaintainProject},
-    {1,8,20,"Compress APK files in a folder",CompressFolder},
-    {1,8,22,"Settings",SettingsCall},
-    {1,8,24,"Exit",Exit}
+    {1,8,15,"Create a Project",Project},
+    {1,8,17,"Maintain a Project",MaintainProject},
+    {1,8,19,"Compress APK files in a folder",CompressFolder},
+    {1,8,21,"Compress a APK file",CompressAPKFile},
+    {1,8,23,"Settings",SettingsCall},
+    {1,8,25,"Exit",Exit}
 };
 InputStruct ProjectName= {"Enter the Name of the Project: ",9,15,50,StringType,TitleCharLen,0,1,0,1,""};
 InputStruct FileName= {"Enter the Name of the File: ",9,18,50,StringType,TitleCharLen,0,1,1,1,""};
@@ -2711,7 +2754,8 @@ button MaintainProjectButtons[][ButtonsColumnLimit]= {
     {1,8,20,"Manage Exceptions",ManageExceptions},
     {1,8,22,"Manage Properties",ManageProperties},
     {1,8,24,"Delete Project",DeleteProject},
-    {1,8,26,"Back",MaintainProjectBack}
+    {1,8,26,"Import or Export Project Settings And Execptions",ImportExportProjectSettings},
+    {1,8,28,"Back",MaintainProjectBack}
 };
 button ManageExceptionsButtons[][ButtonsColumnLimit]= {
     {1,8,18,"Manage by Name",ManageFileByName},
@@ -2734,6 +2778,22 @@ button DeleteProjectConfirm[][ButtonsColumnLimit]= {
     {1,8,24,"Yes, Perform deletion process.",DeleteProjectYes},
     {1,8,26,"No, I changed my mind.",DeleteProjectNo}
 };
+button ImportExportProjectSettingsButton[][ButtonsColumnLimit]= {
+    {1,8,18,"Perform Import Function",ImportProject},
+    {1,8,20,"Perform Export Function",ExportProject},
+    {1,8,22,"Back",Back}
+};
+
+button ImportExportProjectSettingsImportButton[][ButtonsColumnLimit]= {
+    {1,8,18,"Import Settings through Backup file on your Hard Drive. (Maunual)",ImportProjectManual},
+    {1,8,20,"Import Settings through Backup folder. (Automatic)",ImportProjectAutomatic},
+    {1,8,22,"Back",Back}
+};
+
+button ImportProjectManualCautionButtonsType1[][ButtonsColumnLimit]= {
+    {1,8,24,"Yes, I understand and want to continue any way.",ImportProjectManualCautionType1Yes},
+    {1,8,26,"No, I want to terminate the Import Process.",ImportProjectManualCautionType1No}
+};
 
 void Menu(int MenuID) {
     CurrentMenuID = MenuID;
@@ -2743,7 +2803,7 @@ void Menu(int MenuID) {
         Function.SetTitle("Main Menu");
         Function.ClearConsole(0);
         MenuDesign();
-        Function.CreateButtons(MainMenuButtons,5,DefaultButton,1,2);
+        Function.CreateButtons(MainMenuButtons,6,DefaultButton,1,2);
         break;
     case MenuID_Project:
         Function.SetTitle("Create Project");
@@ -2854,9 +2914,11 @@ void Menu(int MenuID) {
                 }
             }
         } else {
+            MenuDesign(18);
+            Function.SetConsoleDimensions(DefaultWidth,DefaultHeight+40);
             Function.HeaderDesign(1,6,15,70);
             Function.StringOut(0,9,15,65,1,DataVariableSTRING[0]);
-            Function.CreateButtons(MaintainProjectButtons,5,DefaultButton,1,2);
+            Function.CreateButtons(MaintainProjectButtons,6,DefaultButton,1,2);
         }
         break;
     case MenuID_MaintainProjectNoExist:
@@ -3012,6 +3074,41 @@ void Menu(int MenuID) {
         GenerateProjectArray();
         MaintainProjectBack();
         break;
+    case MenuID_ImportExportProjectSettings:
+        Function.SetTitle("Maintain Project - Import or Export Project Settings And Execptions");
+        PreviousMenuID = MenuID_MaintainProject;
+        Function.ClearConsole(0);
+        MenuDesign();
+        Function.HeaderDesign(1,6,15,70);
+        Function.StringOut(0,9,15,65,1,DataVariableSTRING[0]);
+        Function.CreateButtons(ImportExportProjectSettingsButton,3,DefaultButton,1,2);
+        break;
+    case MenuID_ImportExportProjectSettingsImport:
+        Function.SetTitle("Maintain Project - Import or Export Project Settings And Execptions - Perform Import");
+        PreviousMenuID = MenuID_ImportExportProjectSettings;
+        Function.ClearConsole(0);
+        MenuDesign();
+        Function.HeaderDesign(1,6,15,70);
+        Function.StringOut(0,9,15,65,1,DataVariableSTRING[0]);
+        Function.CreateButtons(ImportExportProjectSettingsImportButton,3,DefaultButton,1,2);
+        break;
+    case MenuID_ImportExportProjectSettingsImportManual:
+        Function.SetTitle("Maintain Project - Import or Export Project Settings And Execptions - Perform Import - Manual");
+        PreviousMenuID = MenuID_ImportExportProjectSettingsImport;
+        Function.ClearConsole(0);
+        Function.SetConsoleDimensions(DefaultWidth,DefaultHeight+20);
+        MenuDesign(16);
+        Function.HeaderDesign(1,6,15,70);
+        Function.StringOut(0,9,15,65,1,DataVariableSTRING[0]);
+        Function.HeaderDesign(2,6,18,70);
+        Function.StringOut(34,9,18,65,0,DataVariableSTRING[0]);
+        Function.InputFrame(20,5);
+        Function.StringOut(4,9,26,65,0,"");
+        Function.SetCord(1,21);
+        getline(cin,DataVariableSTRING[2]);
+        ProjectBackupFileSelected = 1;
+        ImportProjectManual();
+        break;
     case MenuID_CompressFolder:
         Function.SetTitle("Compress Folder");
         PreviousMenuID = MenuID_Main;
@@ -3024,6 +3121,26 @@ void Menu(int MenuID) {
         Function.SetCord(1,19);
         getline(cin,DataVariableSTRING[0]);
         PerformCompressFolder();
+        break;
+    case MenuID_CompressAPKFile:
+        Function.SetTitle("Compress Single File");
+        PreviousMenuID = MenuID_Main;
+        Function.ClearConsole(0);
+        MenuDesign();
+        switch(CompressAPKFileSelected){
+           case 0:
+                Function.HeaderDesign(2,6,15,70);
+                Function.StringOut(32,9,15,65,0,"");
+                Function.InputFrame(18,5);
+                Function.StringOut(4,9,25,65,0,"");
+                Function.SetCord(1,19);
+                getline(cin,DataVariableSTRING[0]);
+                PerformCompressFile();
+           break;
+           case 1:
+                PerformCompressFile();
+           break;
+        }
         break;
     case MenuID_PerformCompression:
         Function.SetTitle("Maintain Project - Perform Compression");
@@ -3057,7 +3174,14 @@ void Back() {
                 Function.KeypressSound();
                 Menu(PreviousMenuID);
             }
-        } else MaintainProjectBack();
+        } else {
+            if(CurrentProjectSelected==1){
+                MaintainProjectBack();
+            } else {
+                Function.KeypressSound();
+                Menu(PreviousMenuID);
+            }
+        }
     }
 }
 
@@ -3124,15 +3248,10 @@ void MaintainProject() {
 void CompressFolder() {
     Menu(MenuID_CompressFolder);
 }
-/*
-struct SettingsStruct {
-    int SettingsID;
-    int X;
-    int Y;
-    char Title[TitleCharLen];
-    void (*SettingsFunction)();
+
+void CompressAPKFile(){
+    Menu(MenuID_CompressAPKFile);
 }
-*/
 
 void SettingDisplay(SettingsStruct SettingElement,int Color){
     Function.SetCord(SettingElement.X+Function.StringLength(SettingElement.Title)+3,SettingElement.Y);
@@ -3309,6 +3428,7 @@ void Settings(int StartID) {
                     Settings(CurrentSetting);
                     break;
                 case VK_ESCAPE:
+                case VK_BACK:
                     Back();
                     break;
                 }
@@ -3683,8 +3803,9 @@ void AddFiles() {
 
 void AddFilesManual() {
     PreviousMenuID = MenuID_ProjectAddFiles;
-    string CMDOpenProjectFolder = "start projects\\";
+    string CMDOpenProjectFolder = "explorer \"projects\\";
     CMDOpenProjectFolder+=DataVariableSTRING[0];
+    CMDOpenProjectFolder+="\"";
     system(CMDOpenProjectFolder.c_str());
     Menu(MenuID_ProjectAddFilesManualConfirm);
 }
@@ -3827,8 +3948,9 @@ void BuildProject() {
     fstream ProjectFile;
     ProjectFile.open(ProjectFileName.c_str(),ios::out);
     ProjectFile.close();
-    string CMDForProjectFolder = "mkdir projects\\";
+    string CMDForProjectFolder = "mkdir \"projects\\";
     CMDForProjectFolder+=DataVariableSTRING[0];
+    CMDForProjectFolder+="\"";
     Function._CMD(CMDForProjectFolder.c_str());
     Menu(MenuID_ProjectAddFiles);
 }
@@ -3867,7 +3989,7 @@ void DeleteProjectYes(){
         Command+=ProjectName;
         Command+="\" /s /q";
         Function.CMD(Command.c_str());
-        Menu(MenuID_DeleteProjectDeleteDatabase); 
+        Menu(MenuID_DeleteProjectDeleteDatabase);
     }else if(DeleteProjectType==3){
         string Command = "del \"data\\";
         Command+=ProjectName;
@@ -3923,8 +4045,9 @@ void PerformCompressionConfirmYes() {
     Function.PercentageBar(NoOfFiles*6,NoOfFiles*6,8,24,69);
     string ProjectBuildFolder = "builds\\";
     ProjectBuildFolder+=DataVariableSTRING[0];
-    string Command = "mkdir ";
+    string Command = "mkdir \"";
     Command+=ProjectBuildFolder;
+    Command+="\"";
     Function.ClearFrame(9,22,25,0);
     Function.SetCord(9,22);
     Function.ColorOut("Copying Files...",0);
@@ -3932,7 +4055,7 @@ void PerformCompressionConfirmYes() {
 	Function.ClearFrame(8,24,69,2);
     if(Function.CopyFiles("temp",ProjectBuildFolder.c_str(),".apk",8,24,69)){
 	    Function.ClearFrame(8,24,69,2);
-	    if(Function.DeleteFiles("temp",".apk",8,24,69)){  
+	    if(Function.DeleteFiles("temp",".apk",8,24,69)){
             Function.ClearConsole(0);
             MenuDesign();
             Function.HeaderDesign(1,6,15,70);
@@ -4007,7 +4130,7 @@ void PerformCompressFolder(){
 	Function.ClearFrame(8,24,69,2);
     if(Function.CopyFiles("temp",CompressedFolder.c_str(),".apk",8,24,69)){
 	    Function.ClearFrame(8,24,69,2);
-	    if(Function.DeleteFiles("temp",".apk",8,24,69)){  
+	    if(Function.DeleteFiles("temp",".apk",8,24,69)){
             Function.ClearConsole(0);
             MenuDesign();
             Function.HeaderDesign(1,6,15,70);
@@ -4029,6 +4152,110 @@ void PerformCompressFolder(){
     	    Menu(MenuID_Main);
         }else cout<<"Error!";
 	}else cout<<"Error!";
+}
+
+void PerformCompressFile(){
+    if(Function.StringLength(DataVariableSTRING[0])>235) cout<<"Error!";
+    if(Function.StringLength(DataVariableSTRING[0])!=0){
+        int CurrentCompressionID = 0;
+        int NoOfFiles = 1;
+        string File = DataVariableSTRING[0],FilePath,FileName;
+        if((DataVariableSTRING[0][0]=='"')&&(DataVariableSTRING[0][Function.StringLength(DataVariableSTRING[0])-1]=='"')) {
+            File = File.substr(1,Function.StringLength(File)-1);
+            File = File.substr(0,Function.StringLength(File)-1);
+        }
+        FilePath = File;
+        int Position = 0;
+        for(int i=(Function.StringLength(DataVariableSTRING[0])-1);i>=0;i--){
+            if(File[i]=='\\'){
+                Position = i+1;
+                break;
+            }
+        }
+        File = File.substr(Position,Function.StringLength(DataVariableSTRING[0])-Position);
+        if(Function.StringLength(File)<=4){
+            cout<<"Error";
+        }
+        FilePath = FilePath.substr(0,Function.StringLength(FilePath)-Function.StringLength(File));
+        FileName = File.substr(0,Function.StringLength(File)-4);
+        if(Function.StringLength(File)>4){
+            if(!strcmp(File.substr(Function.StringLength(File)-4).c_str(),".apk")){
+                ProjectFilePropertiesStruct FileStruct;
+                strcpy(FileStruct.FileName,File.c_str());
+                FileStruct.CompressionLevel=GetINTSetting(1);
+                FileStruct.PNGCompression=GetINTSetting(2);
+                FileStruct.PNGCompressionLevel=GetINTSetting(3);
+                FileStruct.ZipAlign=GetINTSetting(4);
+                FileStruct.SignApk=GetINTSetting(5);
+                FileStruct.ExceptionStatus=0;
+                cout<<FileStruct.CompressionLevel;
+                Function.ClearConsole(0);
+                MenuDesign();
+                Function.HeaderDesign(1,6,15,70);
+                Function.StringOut(31,9,15,65,1,"");
+                Function.HeaderDesign(1,6,18,70);
+                Function.SetCord(9,18);
+                Function.ColorOut("Current File : ",0);
+                Function.ColorOut(File,1,50);
+                Function.HeaderDesign(1,6,20,70);
+                Function.SetCord(9,20);
+                Function.ColorOut("No Of Files Done : ",0);
+                cout<<CurrentCompressionID<<" out of "<<NoOfFiles;
+                Function.HeaderDesign(1,6,22,70);
+                Function.PercentageBar(NoOfFiles*6,CurrentCompressionID*6,8,24,69);
+                CompressFile(FileStruct,CurrentCompressionID,NoOfFiles,3);
+                CurrentCompressionID = 1;
+                Function.PercentageBar(NoOfFiles*6,CurrentCompressionID*6,8,24,69);
+                FileName+="_Cassini[";
+                stringstream StringStream;
+                StringStream<<Function.GetCurrentDate(1)<<"-"<<Function.GetCurrentDate(2)<<"-"<<Function.GetCurrentDate(3)<<"]["<<Function.GetCurrentDate(4)<<"-"<<Function.GetCurrentDate(5)<<"-"<<Function.GetCurrentDate(6)<<"].apk";
+                FileName+=StringStream.str();
+                string OriginalFilePath = FilePath;
+                OriginalFilePath+=File;
+                string CMD = "ren \"%0\\..\\temp\\";
+                CMD+=File;
+                CMD+="\" \"";
+                CMD+=FileName;
+                CMD+="\"";
+                Function.SetCord(9,22);
+                Function.ColorOut("Processing File...",0);
+                Function._CMD(CMD.c_str());
+                Function.SetCord(9,22);
+                Function.ColorOut("Copying File...",0);
+                if(Function.CopyFiles("temp",FilePath.c_str(),".apk",8,24,69)){
+                    Function.SetCord(9,22);
+                    Function.ColorOut("Deleting Temp File...",0);
+            	    if(Function.DeleteFiles("temp",".apk",8,24,69)){
+                        FilePath+=FileName;
+                        Function.ClearConsole(0);
+                        MenuDesign();
+                        Function.HeaderDesign(1,6,15,70);
+                        Function.SetCord(9,15);
+                        Function.ColorOut(File,0,69);
+                        Function.HeaderDesign(1,6,18,70);
+                        Function.SetCord(9,18);
+                        Function.ColorOut("Compression Ratio : ",0);
+                        double CompressionRatio = (Function.FileSize(FilePath.c_str(),1)/Function.FileSize(OriginalFilePath.c_str(),1))*100;
+                        cout<<CompressionRatio<<" %";
+                        Function.HeaderDesign(2,6,20,70);
+                        Function.StringOut(29,9,20,65,0,FilePath);
+                        Function.StringOut(30,9,24,65,0,"open the compressed file folder and go back.");
+                        getch();
+                        string CMDOpenCompressFileFolder = "explorer ";
+                        CMDOpenCompressFileFolder+=OriginalFilePath.substr(0,Function.StringLength(OriginalFilePath)-Function.StringLength(File));
+                        system(CMDOpenCompressFileFolder.c_str());
+                        cin.clear();
+                	    Menu(MenuID_Main);
+                    }else cout<<"Error!";
+            	}else cout<<"Error!";
+            }else{
+                cin.clear();
+                Menu(MenuID_Main);
+            }
+        }
+    }else{
+        Menu(MenuID_Main);
+    }
 }
 
 void InitializePNGFileCount(const char* DirectoryPath){
@@ -4081,8 +4308,9 @@ void CompressPNG(const char* DirectoryPath,string Quality,int NoOfFiles, int Cur
                         FilePath+=FileName;
                         string Command = "call resources\\pngquant --force --ext .png --quality=";
                         Command+=Quality;
-                        Command+=" ";
+                        Command+=" \"";
                         Command+=FilePath;
+                        Command+="\"";
                         Function.CMD(Command.c_str());
                         TempPNGFileCount++;
                         Function.PercentageBar(PNGFileCount,TempPNGFileCount,37,21,40);
@@ -4109,15 +4337,22 @@ void CompressFile(ProjectFilePropertiesStruct File,int CurrentCompressionID,int 
         FilePath = "%0\\..\\projects\\";
         FilePath+=GetCurrentProject().Title;
         FilePath+="\\";
+        FilePath+=FileName;
     }else if(Type==2){
         FilePath = DataVariableSTRING[0];
-        if((DataVariableSTRING[1][0]=='"')&&(DataVariableSTRING[1][Function.StringLength(DataVariableSTRING[1])-1]=='"')) {
+        if((DataVariableSTRING[0][0]=='"')&&(DataVariableSTRING[0][Function.StringLength(DataVariableSTRING[0])-1]=='"')) {
             FilePath = FilePath.substr(1,Function.StringLength(FilePath)-1);
             FilePath = FilePath.substr(0,Function.StringLength(FilePath)-1);
         }
         FilePath+="\\";
+        FilePath+=FileName;
+    }else if(Type==3){
+        FilePath = DataVariableSTRING[0];
+        if((DataVariableSTRING[0][0]=='"')&&(DataVariableSTRING[0][Function.StringLength(DataVariableSTRING[0])-1]=='"')) {
+            FilePath = FilePath.substr(1,Function.StringLength(FilePath)-1);
+            FilePath = FilePath.substr(0,Function.StringLength(FilePath)-1);
+        }
     }
-    FilePath+=FileName;
     string FileTempFolder = "%0\\..\\temp\\";
     FileTempFolder+=FileFolder;
     string FilePathTemp = "%0\\..\\temp\\";
@@ -4127,10 +4362,11 @@ void CompressFile(ProjectFilePropertiesStruct File,int CurrentCompressionID,int 
     Function.ClearFrame(9,22,25,0);
     Function.SetCord(9,22);
     Function.ColorOut("Extracting File...",0);
-    Command = "call resources\\7za x ";
+    Command = "call resources\\7za x \"";
     Command+=FilePath;
-    Command+=" -o";
+    Command+="\" -o\"";
     Command+=FileTempFolder;
+    Command+="\"";
     Function.CMD(Command.c_str());
     Function.PercentageBar(NoOfFiles*6,(CurrentCompressionID)*6+1,8,24,69);
     PNGFileCount = 0;
@@ -4147,30 +4383,42 @@ void CompressFile(ProjectFilePropertiesStruct File,int CurrentCompressionID,int 
     Function.ClearFrame(7,22,70,0);
     Function.HeaderDesign(1,6,22,70);
     // Pass - 3
+    Command="rmdir /S /Q \"";
+    Command+=FileTempFolder;
+    Command+="\\META-INF\"";
+    Function.CMD(Command.c_str());
+    // Pass - 4
     Function.SetCord(9,22);
     Function.ColorOut("Compressing APK...",0);
-    Command = "call resources\\7za a -tzip ";
+    Command="call resources\\7za a -tzip \"";
     Command+=FilePathTemp;
-    Command+=" ";
+    Command+="\" \"";
     Command+=FileTempFolder;
-    Command+="\\* -mx";
+    Command+="\\*\" -mx";
     Command+=CompressionLevelString;
     Command+=" -y";
     Function.CMD(Command.c_str());
     Function.PercentageBar(NoOfFiles*6,(CurrentCompressionID)*6+3,8,24,69);
-    // Pass - 4
+    Function.ClearFrame(7,22,70,0);
+    Function.HeaderDesign(1,6,22,70);
+    // Pass - 5
     if(File.SignApk==1) {
     	Function.ClearFrame(9,22,25,0);
 	    Function.SetCord(9,22);
 	    Function.ColorOut("Signing APK...",0);
-        Command = "java -jar %0\\..\\resources\\signapk.jar %0\\..\\resources\\testkey.x509.pem %0\\..\\resources\\testkey.pk8 ";
+        Command = "java -jar %0\\..\\resources\\signapk.jar %0\\..\\";
+        Command+= SignApkCertificateFilePath;
+        Command+= " %0\\..\\";
+        Command+= SignApkKeyFilePath;
+        Command+= " \"";
         Command+=FilePathTemp;
-        Command+=" ";
+        Command+="\" \"";
         Command+=FilePathTemp;
-        Command+="-Signed";
+        Command+="-Signed\"";
         Function.CMD(Command.c_str());
-        Command = "del ";
+        Command = "del \"";
         Command+=FilePathTemp;
+        Command+="\"";
         Function.CMD(Command.c_str());
         Command = "ren \"";
         Command+=FilePathTemp;
@@ -4180,19 +4428,22 @@ void CompressFile(ProjectFilePropertiesStruct File,int CurrentCompressionID,int 
         Function.CMD(Command.c_str());
     }
     Function.PercentageBar(NoOfFiles*6,(CurrentCompressionID)*6+4,8,24,69);
-    // Pass - 5
+    Function.ClearFrame(7,22,70,0);
+    Function.HeaderDesign(1,6,22,70);
+    // Pass - 6
     if(File.ZipAlign==1) {
     	Function.ClearFrame(9,22,25,0);
 	    Function.SetCord(9,22);
 	    Function.ColorOut("Performing ZipAlign...",0);
-        Command = "call resources\\zipalign -f 4 ";
+        Command = "call resources\\zipalign -f 4 \"";
         Command+=FilePathTemp;
-        Command+=" ";
+        Command+="\" \"";
         Command+=FilePathTemp.substr(0,Function.StringLength(FilePathTemp)-4);
-        Command+="-ZipAligned.apk";
+        Command+="-ZipAligned.apk\"";
         Function.CMD(Command.c_str());
-        Command = "del ";
+        Command = "del \"";
         Command+=FilePathTemp;
+        Command+="\"";
         Function.CMD(Command.c_str());
         Command = "ren \"";
         Command+=FilePathTemp.substr(0,Function.StringLength(FilePathTemp)-4);
@@ -4202,13 +4453,19 @@ void CompressFile(ProjectFilePropertiesStruct File,int CurrentCompressionID,int 
         Function.CMD(Command.c_str());
     }
     Function.PercentageBar(NoOfFiles*6,(CurrentCompressionID)*6+5,8,24,69);
-    // Pass - 6
+    Function.ClearFrame(7,22,70,0);
+    Function.HeaderDesign(1,6,22,70);
+    // Pass - 7
     Function.ClearFrame(9,22,25,0);
     Function.SetCord(9,22);
     Function.ColorOut("Deleting Files...",0);
-    Command = "rmdir /S /Q ";
+    Command = "rmdir /S /Q \"";
     Command+=FileTempFolder;
+    Command+="\"";
     Function.CMD(Command.c_str());
+    Function.ClearFrame(7,22,70,0);
+    Function.HeaderDesign(1,6,22,70);
+    MenuDesign();
 }
 
 void ManageExceptions() {
@@ -4308,12 +4565,135 @@ void MaintainProjectSelectType2() {
     MaintainProjectSelectType = 2;
 }
 
+void ImportExportProjectSettings(){
+    Menu(MenuID_ImportExportProjectSettings);
+}
+
+void ExportProject(){
+    int NumberOfFiles = GetCurrentProject().NoOfFiles;
+    ProjectBackup Temp;
+    fstream ExportProjectFile;
+    string ExportProjectFilePath = "backup\\";
+    ExportProjectFilePath+=GetCurrentProject().Title;
+    ExportProjectFilePath+="_Cassini_Backup[";
+    stringstream StringStream;
+    StringStream<<Function.GetCurrentDate(1)<<"-"<<Function.GetCurrentDate(2)<<"-"<<Function.GetCurrentDate(3)<<"]["<<Function.GetCurrentDate(4)<<"-"<<Function.GetCurrentDate(5)<<"-"<<Function.GetCurrentDate(6)<<"].bin";
+    ExportProjectFilePath+=StringStream.str();
+    ExportProjectFile.open(ExportProjectFilePath.c_str(),ios::out);
+    if(ExportProjectFile.is_open()){
+        for(int i=0;i<=NumberOfFiles;i++){
+            if(i!=NumberOfFiles){
+                Temp.CompressionLevel = ProjectFileArray[i].CompressionLevel;
+                Temp.PNGCompression = ProjectFileArray[i].PNGCompression;
+                Temp.PNGCompressionLevel = ProjectFileArray[i].PNGCompressionLevel;
+                Temp.ZipAlign = ProjectFileArray[i].ZipAlign;
+                Temp.SignApk = ProjectFileArray[i].SignApk;
+                Temp.IntegerVariable = ProjectFileArray[i].ExceptionStatus;
+                strcpy(Temp.Name,ProjectFileArray[i].FileName);
+                Temp.StructType = 1;
+            }else{
+                Temp.CompressionLevel = GetCurrentProject().CompressionLevel;
+                Temp.PNGCompression = GetCurrentProject().PNGCompression;
+                Temp.PNGCompressionLevel = GetCurrentProject().PNGCompressionLevel;
+                Temp.ZipAlign = GetCurrentProject().ZipAlign;
+                Temp.SignApk = GetCurrentProject().SignApk;
+                Temp.IntegerVariable = NumberOfFiles;
+                strcpy(Temp.Name,GetCurrentProject().Title);
+                Temp.StructType = 2;
+            }
+            ExportProjectFile.write((char*)&Temp,sizeof(Temp));
+        }
+    }else cout<<"Error!";
+    ExportProjectFile.close();
+    Function.SetTitle("Maintain Project - Import or Export Project Settings And Execptions - Perform Export");
+    Function.ClearConsole(0);
+    MenuDesign();
+    Function.HeaderDesign(1,6,15,70);
+    Function.StringOut(0,9,15,65,1,DataVariableSTRING[0]);
+    Function.StringOut(33,9,17,65,0,"");
+    Function.StringOut(ExportProjectFilePath.c_str(),9,20,65,1,"");
+    Function.StringOut(7,9,25,65,0,"go back");
+    getch();
+    Menu(MenuID_ImportExportProjectSettings);
+}
+
+void ImportProject(){
+    Menu(MenuID_ImportExportProjectSettingsImport);
+}
+
+void ImportProjectManual(){if(ProjectBackupFileSelected==0){
+        Menu(MenuID_ImportExportProjectSettingsImportManual);
+    }else{
+        if(Function.StringLength(DataVariableSTRING[2])==0){
+            ProjectBackupFileSelected = 0;
+            Back();
+        }
+        string BackupFilePath = DataVariableSTRING[2];
+        if((DataVariableSTRING[2][0]=='"')&&(DataVariableSTRING[2][Function.StringLength(DataVariableSTRING[2])-1]=='"')) {
+            BackupFilePath = BackupFilePath.substr(1,Function.StringLength(BackupFilePath)-1);
+            BackupFilePath = BackupFilePath.substr(0,Function.StringLength(BackupFilePath)-1);
+        }
+        if(Function.StringLength(BackupFilePath)>255) cout<<"Error!";
+        fstream BackupFile(BackupFilePath.c_str(),ios::in);
+        if(BackupFile.is_open()){
+            ProjectBackup Temp;
+            while(!BackupFile.eof()){
+                BackupFile.read((char*)&Temp,sizeof(Temp));
+                if(Temp.StructType==2){
+                    if(strcmp(Temp.Name,GetCurrentProject().Title)){
+                        cout<<"Error!";
+                    }else{
+                        if((Temp.IntegerVariable!=GetCurrentProject().NoOfFiles)&&(ImportProjectManualCautionType1Flag==0)){
+                            Function.SetTitle("Maintain Project - Import or Export Project Settings And Execptions - Perform Import - Caution");
+                            Function.ClearConsole(0);
+                            Function.SetConsoleDimensions(DefaultWidth,DefaultHeight+20);
+                            MenuDesign(16);
+                            Function.HeaderDesign(1,6,15,70);
+                            Function.StringOut(0,9,15,65,1,DataVariableSTRING[0]);
+                            Function.StringOut(35,9,18,65,0,"");
+                            Function.CreateButtons(ImportProjectManualCautionButtonsType1,2,DefaultButton,1,2);
+                        }
+
+                    }
+                }
+            }
+        }else cout<<"Error!";
+        ProjectBackupFileSelected = 0;
+    }
+}
+
+void ImportProjectManualCautionType1Yes(){
+    ImportProjectManualCautionType1Flag = 1;
+    ImportProjectManual();
+}
+
+void ImportProjectManualCautionType1No(){
+    ProjectBackupFileSelected = 0;
+    ImportProjectManualCautionType1Flag = 0;
+    Back();
+}
+
+void ImportProjectAutomatic(){
+    Menu(MenuID_ImportExportProjectSettingsImportManual);
+}
+
 int main(int argc, char *argv[])
 {
     InitializeVariables();
     Function.CursorToggle(0);
     Function.SetConsoleDimensions(DefaultWidth,DefaultHeight);
-    GenerateProjectArray();
-    Menu(MenuID_Main);
+    if(argv[1]){
+        DataVariableSTRING[0] = argv[1];
+        CompressAPKFileSelected = 1;
+        delete[] argv[1];
+        if(Function.StringLength(DataVariableSTRING[0])>4){
+            if(!strcmp(DataVariableSTRING[0].substr(Function.StringLength(DataVariableSTRING[0])-4).c_str(),".apk")){
+                 Menu(MenuID_CompressAPKFile);
+            }
+        }
+    }else{
+        GenerateProjectArray();
+        Menu(MenuID_Main);
+    }
     return EXIT_SUCCESS;
 }
