@@ -1,0 +1,33 @@
+# Project: Cassini.1.2
+# Makefile created by Dev-C++ 4.9.9.2
+
+CPP  = g++.exe
+CC   = gcc.exe
+WINDRES = windres.exe
+RES  = ../Cassini.1.2/Cassini.1.2_private.res
+OBJ  = ../Cassini.1.2/Cassini.1.2.o $(RES)
+LINKOBJ  = ../Cassini.1.2/Cassini.1.2.o $(RES)
+LIBS =  -L"C:/Dev-Cpp/lib"  -s 
+INCS =  -I"C:/Dev-Cpp/include" 
+CXXINCS =  -I"C:/Dev-Cpp/lib/gcc/mingw32/3.4.2/include"  -I"C:/Dev-Cpp/include/c++/3.4.2/backward"  -I"C:/Dev-Cpp/include/c++/3.4.2/mingw32"  -I"C:/Dev-Cpp/include/c++/3.4.2"  -I"C:/Dev-Cpp/include" 
+BIN  = Cassini.1.2
+CXXFLAGS = $(CXXINCS)   -O3
+CFLAGS = $(INCS)   -O3
+RM = rm -f
+
+.PHONY: all all-before all-after clean clean-custom
+
+all: all-before Cassini.1.2 all-after
+
+
+clean: clean-custom
+	${RM} $(OBJ) $(BIN)
+
+$(BIN): $(OBJ)
+	$(CPP) $(LINKOBJ) -o "Cassini.1.2" $(LIBS)
+
+../Cassini.1.2/Cassini.1.2.o: Cassini.1.2.cpp
+	$(CPP) -c Cassini.1.2.cpp -o ../Cassini.1.2/Cassini.1.2.o $(CXXFLAGS)
+
+../Cassini.1.2/Cassini.1.2_private.res: Cassini.1.2_private.rc 
+	$(WINDRES) -i Cassini.1.2_private.rc --input-format=rc -o ../Cassini.1.2/Cassini.1.2_private.res -O coff 
